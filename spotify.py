@@ -60,7 +60,7 @@ def load_all_tracks(playlist_id):
     return clean
 
 # ==========================
-# SORT BY RELEASE DATE (OLDEST → NEWEST)
+# SORT BY RELEASE DATE OR POPULARITY (OLDEST/LESS POPUPLAR → NEWEST/MORE POPULAR)
 # ==========================
 
 def sort_by_release_date(tracks):
@@ -73,7 +73,7 @@ def sort_by_popularity(tracks):
 
 
 # ==========================
-# PROPORTIONAL ARTIST SEPARATION (MAIN ARTIST TOP & BOTTOM)
+# PROPORTIONAL ARTIST SEPARATION
 # ==========================
 
 def artist_separation_final(tracks):
