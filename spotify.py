@@ -1,19 +1,20 @@
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from collections import defaultdict
+import requests
 
 # ==========================
 # SPOTIFY APP CREDENTIALS
 # ==========================
-CLIENT_ID = "bc15xxxxxx9ed03"                          # rewrite to your own Client ID
-CLIENT_SECRET = "88edxxxxxxxxxxxx2b2ee"                # rewrite to your own Client Secret
-REDIRECT_URI = "http://127.0.0.1:8000/callback"        # rewrite to your own Redirect URI
+CLIENT_ID = "xxxxx"                                     # rewrite to your own Client ID
+CLIENT_SECRET = "xxxxx"                                 # rewrite to your own Client Secret
+REDIRECT_URI = "http://127.0.0.1:8000/callback"         # rewrite to your own Redirect URI
 
 # ==========================
 # PLAYLIST SETTINGS
 # ==========================
-SOURCE_PLAYLIST_ID = "1kK2xxxxxxxxxPzrWS"              # rewrite with the playlist ID you want to sort
-NEW_PLAYLIST_NAME = "artist_separation"                # rewrite to how the new playlist should be named
+SOURCE_PLAYLIST_ID = "abcde"                          # rewrite with the playlist ID you want to sort
+NEW_PLAYLIST_NAME = "abcde_NEW"                       # rewrite to how the new playlist should be named
 
 SCOPES = (
     "playlist-read-private "
@@ -45,7 +46,7 @@ user_id = sp.current_user()["id"]
 
 def load_all_tracks(playlist_id):
     tracks = []
-    results = sp.playlist_items(playlist_id, limit=100)
+    results = sp.playlist_items(playlist_id, limit=50)
     tracks.extend(results["items"])
 
     while results["next"]:
@@ -54,24 +55,20 @@ def load_all_tracks(playlist_id):
 
     clean = []
     for item in tracks:
-        t = item.get("track")
+        t = item.get("item")
         if t and t.get("id"):
             clean.append(t)
     return clean
 
-# ==========================
-# SORT BY RELEASE DATE OR POPULARITY (OLDEST/LESS POPUPLAR → NEWEST/MORE POPULAR)
-# ==========================
+# =======================
+# SORT BY RELEASE DATE
+# =======================
 
 def sort_by_release_date(tracks):
     def get_date(t):
         return t.get("album", {}).get("release_date", "0000")
     return sorted(tracks, key=lambda t: get_date(t))
     
-def sort_by_popularity(tracks):
-    return sorted(tracks, key=lambda t: t.get("popularity", 0))
-
-
 # ==========================
 # PROPORTIONAL ARTIST SEPARATION
 # ==========================
@@ -142,21 +139,35 @@ print("Loading playlist...")
 tracks = load_all_tracks(SOURCE_PLAYLIST_ID)
 
 print(f"Loaded {len(tracks)} tracks. Sorting...")
-#sorted_by_date = sort_by_release_date(tracks)                # uncomment if you want sorting by release date first
-sorted_by_date = sort_by_popularity(tracks)                   # uncomment if you want sorting by popularity first
+sorted_by_date = sort_by_release_date(tracks)
 
 print("Applying proportional artist separation...")
 final_sorted = artist_separation_final(sorted_by_date)
 
 track_ids = [t["id"] for t in final_sorted]
 
+#####
+token = sp.auth_manager.get_access_token(as_dict=False)
+
+url = "https://api.spotify.com/v1/me/playlists"
+
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json"
+}
+
+data = {
+    "name": NEW_PLAYLIST_NAME,
+    "description": "artist separation",
+    "public": False
+}
 print("Creating new playlist...")
-new_playlist = sp.user_playlist_create(
-    user=user_id,
-    name=NEW_PLAYLIST_NAME,
-    public=False,
-    description="artist separation"
-)
+
+response = requests.post(url, headers=headers, json=data)
+response.raise_for_status()
+
+new_playlist = response.json()
+print(new_playlist["id"])
 
 new_id = new_playlist["id"]
 
