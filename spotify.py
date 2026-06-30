@@ -60,15 +60,19 @@ def load_all_tracks(playlist_id):
             clean.append(t)
     return clean
 
-# =======================
-# SORT BY RELEASE DATE
-# =======================
+# ==========================
+# SORT BY RELEASE DATE OR POPULARITY
+# ==========================
 
 def sort_by_release_date(tracks):
     def get_date(t):
         return t.get("album", {}).get("release_date", "0000")
     return sorted(tracks, key=lambda t: get_date(t))
     
+def sort_by_popularity(tracks):
+    return sorted(tracks, key=lambda t: t.get("popularity", 0))
+
+
 # ==========================
 # PROPORTIONAL ARTIST SEPARATION
 # ==========================
@@ -76,7 +80,7 @@ def sort_by_release_date(tracks):
 def artist_separation_final(tracks):
     from collections import defaultdict
 
-    # 1. Group by artist (tracks already sorted by date)
+    # 1. Group by artist (tracks already sorted)
     groups = defaultdict(list)
     for t in tracks:
         artist = t["artists"][0]["name"]
@@ -131,6 +135,81 @@ def artist_separation_final(tracks):
 
     return result
 
+
+def randomize_tracks(tracks, seed=None, max_attempts=50):
+    def get_date(t):
+        return t.get("album", {}).get("release_date", "0000")
+
+    if seed is not None:
+        random.seed(seed)
+
+    # 1) Global shuffle
+    shuffled = tracks[:] 
+    random.shuffle(shuffled)
+
+    # 2) Map artist -> positions in shuffled list
+    artist_positions = defaultdict(list)
+    for idx, t in enumerate(shuffled):
+        artist = t["artists"][0]["name"]
+        artist_positions[artist].append(idx)
+
+    # 3) Helper to check the order
+    def is_monotonic(dates):
+        if len(dates) < 3:
+            return True
+    
+        # Check monotonic ascending
+        ascending = all(dates[i] <= dates[i+1] for i in range(len(dates)-1))
+    
+        # Check monotonic descending
+        descending = all(dates[i] >= dates[i+1] for i in range(len(dates)-1))
+    
+        # Check triple repetition
+        for i in range(len(dates) - 2):
+            if dates[i] == dates[i+1] == dates[i+2]:
+                return True  # reject this sequence
+    
+        # Return True if monotonic OR triple repetition
+        return ascending or descending
+
+    # 4) For each artist with multiple tracks, ensure their tracks are not in ascending order
+    for artist, positions in artist_positions.items():
+        if len(positions) < 3:
+            continue
+
+        current_tracks = [shuffled[i] for i in positions]
+        dates = [get_date(t) for t in current_tracks]
+            
+        if not is_monotonic(dates):
+            continue
+
+        # Try random permutations of the artist's tracks among the same positions
+        attempts = 0
+        success = False
+        while attempts < max_attempts and not success:
+            attempts += 1
+            perm = current_tracks[:]
+            random.shuffle(perm)
+            perm_dates = [get_date(t) for t in perm]
+            if not is_monotonic(perm_dates):
+                for pos, new_track in zip(positions, perm):
+                    shuffled[pos] = new_track
+                success = True
+
+        # Fallback: perform random swaps between these positions and other random positions
+        if not success:
+            other_indices = [i for i in range(len(shuffled)) if i not in positions]
+            if other_indices:
+                for pos in positions:
+                    swap_with = random.choice(other_indices)
+                    shuffled[pos], shuffled[swap_with] = shuffled[swap_with], shuffled[pos]
+                    other_indices.remove(swap_with)
+                    if other_indices == []:
+                        break
+
+    return shuffled
+
+
 # ==========================
 # MAIN LOGIC
 # ==========================
@@ -139,7 +218,10 @@ print("Loading playlist...")
 tracks = load_all_tracks(SOURCE_PLAYLIST_ID)
 
 print(f"Loaded {len(tracks)} tracks. Sorting...")
-sorted_by_date = sort_by_release_date(tracks)
+#sorted_by_date = sort_by_release_date(tracks)             # uncomment
+#sorted_by_date = sort_by_popularity(tracks)               # uncomment
+sorted_by_date = randomize_tracks(tracks)                  # uncomment
+
 
 print("Applying proportional artist separation...")
 final_sorted = artist_separation_final(sorted_by_date)
@@ -168,6 +250,7 @@ response.raise_for_status()
 
 new_playlist = response.json()
 print(new_playlist["id"])
+#####
 
 new_id = new_playlist["id"]
 
