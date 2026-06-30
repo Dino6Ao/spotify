@@ -13,4 +13,4 @@ etc.
 
 Total number of all songs gets divided by number of songs from one artist and those are then placed roughly equaly between each other, so song from artist A will be in the playlist every ~20th position (1 000 / 50 = 20), song from Artist C will be there every ~200th position (1 000 / 5 = 200) etc. This way, the artist separation in the playlist is maximized.
 
-Songs from one artist are sorted by release date (from oldest to newest).
+Songs from one artist are sorted by release date (from oldest to newest) OR randomized until not matching any of the following criteria (from oldest, from newest, three songs from one album in a row from one artist)
