@@ -80,7 +80,7 @@ def sort_by_popularity(tracks):
 def artist_separation_final(tracks):
     from collections import defaultdict
 
-    # 1. Group by artist (tracks already sorted)
+    # 1. Group by artist
     groups = defaultdict(list)
     for t in tracks:
         artist = t["artists"][0]["name"]
@@ -99,44 +99,38 @@ def artist_separation_final(tracks):
         artist_tracks = groups[artist]
         c = len(artist_tracks)
 
-        # 4a. Get remaining empty positions
+        # 4a. Remaining empty positions
         empty_positions = [i for i, v in enumerate(result) if v is None]
         m = len(empty_positions)
 
-        # 4b. Compute spacing across remaining empty slots
-        step = m / c
+        # 4b. Fractional spacing targets
+        # (i + 0.5) ensures centered spacing
+        targets = [(i + 0.5) * m / c for i in range(c)]
 
-        # 4c. Ideal positions inside empty_positions
-        ideal_positions = [int(round(i * step)) for i in range(c)]
+        # 4c. Map each target to nearest unused empty slot index
+        used = set()
+        ideal_positions = []
+        for t in targets:
+            # find nearest free index in empty_positions
+            best = min(
+                (i for i in range(m) if i not in used),
+                key=lambda x: abs(x - t)
+            )
+            used.add(best)
+            ideal_positions.append(best)
 
-        # 4d. Place each track at nearest empty slot to ideal position
-        for i, track in enumerate(artist_tracks):
-            ideal_index = ideal_positions[i]
-
-            # Clamp
-            if ideal_index < 0:
-                ideal_index = 0
-            if ideal_index >= m:
-                ideal_index = m - 1
-
-            # Find nearest free empty slot
-            offset = 0
-            while True:
-                for candidate in (ideal_index - offset, ideal_index + offset):
-                    if 0 <= candidate < m:
-                        real_pos = empty_positions[candidate]
-                        if result[real_pos] is None:
-                            result[real_pos] = track
-                            break
-                else:
-                    offset += 1
-                    continue
-                break
+        # 4d. Place tracks
+        for pos, track in zip(ideal_positions, artist_tracks):
+            real_pos = empty_positions[pos]
+            result[real_pos] = track
 
     return result
 
 
 def randomize_tracks(tracks, seed=None, max_attempts=50):
+    from collections import defaultdict
+    import random
+
     def get_date(t):
         return t.get("album", {}).get("release_date", "0000")
 
@@ -144,7 +138,7 @@ def randomize_tracks(tracks, seed=None, max_attempts=50):
         random.seed(seed)
 
     # 1) Global shuffle
-    shuffled = tracks[:] 
+    shuffled = tracks[:]
     random.shuffle(shuffled)
 
     # 2) Map artist -> positions in shuffled list
@@ -153,59 +147,84 @@ def randomize_tracks(tracks, seed=None, max_attempts=50):
         artist = t["artists"][0]["name"]
         artist_positions[artist].append(idx)
 
-    # 3) Helper to check the order
-    def is_monotonic(dates):
+    # --- BAD SEQUENCE CHECKERS ---
+
+    # A) ascending/descending chronological order
+    def is_monotonic_order(dates):
         if len(dates) < 3:
-            return True
-    
-        # Check monotonic ascending
+            return False
         ascending = all(dates[i] <= dates[i+1] for i in range(len(dates)-1))
-    
-        # Check monotonic descending
         descending = all(dates[i] >= dates[i+1] for i in range(len(dates)-1))
-    
-        # Check triple repetition
-        for i in range(len(dates) - 2):
-            if dates[i] == dates[i+1] == dates[i+2]:
-                return True  # reject this sequence
-    
-        # Return True if monotonic OR triple repetition
         return ascending or descending
 
-    # 4) For each artist with multiple tracks, ensure their tracks are not in ascending order
+    # B) repetition checker (double, triple, quadruple, quintuple)
+    def is_bad_repetition(dates, repetition_limit):
+        if len(dates) < repetition_limit:
+            return False
+        for i in range(len(dates) - repetition_limit + 1):
+            if all(dates[i] == dates[i + j] for j in range(repetition_limit)):
+                return True
+        return False
+
+    # 4) Process each artist
     for artist, positions in artist_positions.items():
         if len(positions) < 3:
             continue
 
         current_tracks = [shuffled[i] for i in positions]
         dates = [get_date(t) for t in current_tracks]
-            
-        if not is_monotonic(dates):
+
+        # repetition limits to try in phases
+        repetition_limits = [2, 3, 4, 5]
+
+        # check if ANY bad pattern exists
+        bad_pattern_exists = (
+            is_monotonic_order(dates) or
+            any(is_bad_repetition(dates, r) for r in repetition_limits)
+        )
+
+        if not bad_pattern_exists:
             continue
 
-        # Try random permutations of the artist's tracks among the same positions
-        attempts = 0
+        # fallback permutation if all attempts fail
+        final_perm = current_tracks[:]
         success = False
-        while attempts < max_attempts and not success:
-            attempts += 1
-            perm = current_tracks[:]
-            random.shuffle(perm)
-            perm_dates = [get_date(t) for t in perm]
-            if not is_monotonic(perm_dates):
-                for pos, new_track in zip(positions, perm):
-                    shuffled[pos] = new_track
-                success = True
 
-        # Fallback: perform random swaps between these positions and other random positions
+        # --- PHASES ---
+        # 1) avoid double repetition
+        # 2) avoid triple repetition
+        # 3) avoid quadruple repetition
+        # 4) avoid quintuple repetition
+        # also avoid monotonic ascending/descending in ALL phases
+        for limit in repetition_limits:
+            attempts = 0
+            while attempts < max_attempts and not success:
+                attempts += 1
+
+                perm = current_tracks[:]
+                random.shuffle(perm)
+                perm_dates = [get_date(t) for t in perm]
+
+                # must avoid BOTH monotonic order AND repetition
+                if (
+                    not is_monotonic_order(perm_dates) and
+                    not is_bad_repetition(perm_dates, limit)
+                ):
+                    # success → apply permutation
+                    for pos, new_track in zip(positions, perm):
+                        shuffled[pos] = new_track
+                    final_perm = perm
+                    success = True
+                    break
+
+            if success:
+                break
+
+        # --- FALLBACK ---
+        # If all max_attempts fail → keep final_perm
         if not success:
-            other_indices = [i for i in range(len(shuffled)) if i not in positions]
-            if other_indices:
-                for pos in positions:
-                    swap_with = random.choice(other_indices)
-                    shuffled[pos], shuffled[swap_with] = shuffled[swap_with], shuffled[pos]
-                    other_indices.remove(swap_with)
-                    if other_indices == []:
-                        break
+            for pos, new_track in zip(positions, final_perm):
+                shuffled[pos] = new_track
 
     return shuffled
 
