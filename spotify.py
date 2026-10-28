@@ -61,6 +61,35 @@ def load_all_tracks(playlist_id):
     return clean
 
 # ==========================
+# EXPORT ARTIST TRACK COUNTS
+# ==========================
+
+def save_artist_counts_csv(tracks, filename="artist_track_counts.csv"):
+    artist_counts = Counter()
+
+    # Count tracks by their first (primary) artist
+    for track in tracks:
+        artists = track.get("artists", [])
+
+        if artists:
+            artist_name = artists[0]["name"]
+            artist_counts[artist_name] += 1
+
+    # Save one row per unique artist, sorted by track count
+    with open(filename, "w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.writer(file)
+
+        writer.writerow(["artist", "number_of_songs"])
+
+        for artist, count in sorted(
+            artist_counts.items(),
+            key=lambda item: (-item[1], item[0].casefold())
+        ):
+            writer.writerow([artist, count])
+
+    print(f"Saved {len(artist_counts)} unique artists to {filename}")
+
+# ==========================
 # SORT BY RELEASE DATE OR POPULARITY
 # ==========================
 
@@ -72,7 +101,144 @@ def sort_by_release_date(tracks):
 def sort_by_popularity(tracks):
     return sorted(tracks, key=lambda t: t.get("popularity", 0))
 
+# ==========================
+# RANDOMIZE SINGLE SONGS
+# ==========================
 
+def rebalance_single_artist_tracks(shuffled, rng):
+    from collections import defaultdict
+
+    def get_artist(track):
+        return track["artists"][0]["name"]
+
+    def get_year(track):
+        release_date = str(
+            (track.get("album") or {}).get("release_date") or ""
+        )
+
+        if len(release_date) >= 4 and release_date[:4].isdigit():
+            return int(release_date[:4])
+
+        # Missing or invalid release dates are treated as oldest.
+        return 0
+
+    # 1. Count tracks per artist.
+    artist_counts = defaultdict(int)
+
+    for track in shuffled:
+        artist_counts[get_artist(track)] += 1
+
+    # 2. Collect only tracks belonging to artists with 1 or 2 songs.
+    eligible_positions = []
+    eligible_tracks = []
+
+    for position, track in enumerate(shuffled):
+        if artist_counts[get_artist(track)] in (1, 2):
+            eligible_positions.append(position)
+            eligible_tracks.append(track)
+
+    total = len(eligible_tracks)
+
+    if total < 2:
+        return shuffled
+
+    # 3. Sort all eligible songs chronologically.
+    # Python's stable sort preserves the existing randomized order
+    # among songs with the same release year.
+    chronological = sorted(eligible_tracks, key=get_year)
+
+    # 4. Divide the songs into 5 equal-sized chronological batches.
+    # Each batch contains floor(total / 5) or ceil(total / 5) songs.
+    # For 100 songs, each batch contains exactly 20.
+    eras = [[] for _ in range(5)]
+
+    for rank, track in enumerate(chronological):
+        era = min(4, rank * 5 // total)
+        eras[era].append(track)
+
+    # 5. Randomize the order of songs within each era.
+    for era_tracks in eras:
+        rng.shuffle(era_tracks)
+
+    remaining = [len(era_tracks) for era_tracks in eras]
+    ordered_tracks = []
+    previous_era = None
+
+    def can_finish(counts, previous):
+        """
+        Check whether the remaining songs can be arranged without
+        repeating the previous era or repeating adjacent eras.
+        """
+        n = sum(counts)
+
+        if n == 0:
+            return True
+
+        for era, count in enumerate(counts):
+            # The next song cannot belong to the previous era.
+            # Account for that restriction when checking feasibility.
+            if era == previous:
+                limit = n // 2
+            else:
+                limit = (n + 1) // 2
+
+            if count > limit:
+                return False
+
+        return True
+
+    # 6. Build a randomized sequence with no consecutive era repeats.
+    while sum(remaining) > 0:
+        valid_eras = []
+
+        for era, count in enumerate(remaining):
+            if count == 0:
+                continue
+
+            # Never select the same era twice consecutively.
+            if era == previous_era:
+                continue
+
+            # Avoid choices that would make a valid finish impossible.
+            test_remaining = remaining[:]
+            test_remaining[era] -= 1
+
+            if can_finish(test_remaining, era):
+                valid_eras.append(era)
+
+        # The five approximately equal batches should always permit
+        # a valid choice. This is a defensive fallback.
+        if not valid_eras:
+            valid_eras = [
+                era
+                for era, count in enumerate(remaining)
+                if count > 0 and era != previous_era
+            ]
+
+        if not valid_eras:
+            raise RuntimeError(
+                "Could not arrange tracks without repeating an era."
+            )
+
+        # Randomize between valid eras, favoring those with
+        # more remaining songs so that batches stay balanced.
+        selected_era = rng.choices(
+            valid_eras,
+            weights=[remaining[era] for era in valid_eras],
+            k=1,
+        )[0]
+
+        ordered_tracks.append(eras[selected_era].pop())
+        remaining[selected_era] -= 1
+        previous_era = selected_era
+
+    # 7. Replace only eligible positions.
+    # Tracks by artists with 3+ songs remain in their original positions.
+    for position, track in zip(eligible_positions, ordered_tracks):
+        shuffled[position] = track
+
+    return shuffled
+    
 # ==========================
 # PROPORTIONAL ARTIST SEPARATION
 # ==========================
@@ -226,6 +392,10 @@ def randomize_tracks(tracks, seed=None, max_attempts=50):
             for pos, new_track in zip(positions, final_perm):
                 shuffled[pos] = new_track
 
+    # Balance only the single-track artists.
+    # Multi-track artists retain their existing track positions.
+    shuffled = rebalance_single_artist_tracks(shuffled, random)
+
     return shuffled
 
 
@@ -235,6 +405,9 @@ def randomize_tracks(tracks, seed=None, max_attempts=50):
 
 print("Loading playlist...")
 tracks = load_all_tracks(SOURCE_PLAYLIST_ID)
+
+# Export artist counts immediately after loading
+# save_artist_counts_csv(tracks)
 
 print(f"Loaded {len(tracks)} tracks. Sorting...")
 #sorted_by_date = sort_by_release_date(tracks)             # uncomment
