@@ -206,27 +206,25 @@ def rebalance_single_artist_tracks(shuffled, rng):
             if can_finish(test_remaining, era):
                 valid_eras.append(era)
 
-        # The five approximately equal batches should always permit
-        # a valid choice. This is a defensive fallback.
-        if not valid_eras:
-            valid_eras = [
-                era
-                for era, count in enumerate(remaining)
-                if count > 0 and era != previous_era
-            ]
-
+        # A valid choice should always exist because can_finish()
+        # prevents selections that would make completion impossible.
+        # This is only a defensive check for unexpected situations.
         if not valid_eras:
             raise RuntimeError(
-                "Could not arrange tracks without repeating an era."
+                f"No valid era choice. Remaining: {remaining}, "
+                f"Previous era: {previous_era}"
             )
 
-        # Randomize between valid eras, favoring those with
-        # more remaining songs so that batches stay balanced.
-        selected_era = rng.choices(
-            valid_eras,
-            weights=[remaining[era] for era in valid_eras],
-            k=1,
-        )[0]
+        # Select from the fullest remaining valid era(s).
+        # Randomize when multiple eras have equal counts.
+        max_remaining = max(remaining[era] for era in valid_eras)
+
+        fullest_eras = [
+            era for era in valid_eras
+            if remaining[era] == max_remaining
+        ]
+
+        selected_era = rng.choice(fullest_eras)
 
         ordered_tracks.append(eras[selected_era].pop())
         remaining[selected_era] -= 1
